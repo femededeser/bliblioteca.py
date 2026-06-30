@@ -1,0 +1,358 @@
+import sqlite3
+from tkinter import *
+from tkinter import ttk
+from tkinter import messagebox
+from datetime import datetime
+
+# VENTANA
+ventana = Tk()
+ventana.title("Sistema de Biblioteca")
+
+# CONEXION A BASE DE DATOS
+conexion = sqlite3.connect("biblioteca.db")
+cursor = conexion.cursor()
+
+# CREAR TABLA
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS libros(
+    codigo TEXT,
+    titulo TEXT,
+    autor TEXT,
+    estado TEXT,
+    estudiante TEXT,
+    id_estudiante TEXT,
+    fecha_prestamo TEXT,
+    fecha_devolucion TEXT
+)
+""")
+conexion.commit()
+
+# AGREGAR LIBRO
+def agregar_libro():
+
+    codigo = entry_codigo.get()
+    titulo = entry_titulo.get()
+    autor = entry_autor.get()
+
+    if codigo != "" and titulo != "" and autor != "":
+
+        # VERIFICAR CODIGO DUPLICADO
+        cursor.execute("SELECT codigo FROM libros WHERE codigo=?", (codigo,))
+        if cursor.fetchone():
+            messagebox.showwarning("Aviso", "Ya existe un libro con ese código")
+            return
+
+        # GUARDAR EN BASE DE DATOS
+        cursor.execute(
+            "INSERT INTO libros VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (codigo, titulo, autor, "Disponible", "", "", "", "")
+        )
+        conexion.commit()
+
+        tabla.insert(
+            "",
+            END,
+            values=(codigo, titulo, autor, "Disponible", "", "", "", "")
+        )
+
+        entry_codigo.delete(0, END)
+        entry_titulo.delete(0, END)
+        entry_autor.delete(0, END)
+
+    else:
+        messagebox.showwarning("Aviso", "Completa todos los campos")
+
+# FUNCION ELIMINAR LIBRO
+def eliminar_libro():
+
+    seleccionado = tabla.selection()
+
+    if seleccionado:
+
+        valores = tabla.item(seleccionado, "values")
+        codigo = valores[0]
+
+        # ELIMINAR DE SQLITE
+        cursor.execute(
+            "DELETE FROM libros WHERE codigo=?",
+            (codigo,)
+        )
+        conexion.commit()
+
+        # ELIMINAR DE TABLA
+        tabla.delete(seleccionado)
+
+        messagebox.showinfo("Correcto", "Libro eliminado")
+
+    else:
+        messagebox.showwarning("Aviso", "Seleccione un libro")
+
+# PRESTAR LIBRO
+def prestar_libro():
+
+    seleccionado = tabla.selection()
+
+    if seleccionado:
+
+        valores = tabla.item(seleccionado, "values")
+
+        # VERIFICAR QUE NO ESTE YA PRESTADO
+        if valores[3] == "Prestado":
+            messagebox.showwarning("Aviso", "Este libro ya está prestado")
+            return
+
+        estudiante = entry_estudiante.get()
+        id_estudiante = entry_id_estudiante.get()
+        fecha_prestamo = datetime.now().strftime("%d/%m/%Y")
+
+        if estudiante == "" or id_estudiante == "":
+            messagebox.showwarning("Aviso", "Ingrese nombre e ID del estudiante")
+            return
+
+        # ACTUALIZAR TABLA VISUAL
+        tabla.item(
+            seleccionado,
+            values=(
+                valores[0],
+                valores[1],
+                valores[2],
+                "Prestado",
+                estudiante,
+                id_estudiante,
+                fecha_prestamo,
+                ""
+            )
+        )
+
+        # ACTUALIZAR SQLITE
+        cursor.execute(
+            """
+            UPDATE libros
+            SET estado=?, estudiante=?, id_estudiante=?, fecha_prestamo=?
+            WHERE codigo=?
+            """,
+            ("Prestado", estudiante, id_estudiante, fecha_prestamo, valores[0])
+        )
+        conexion.commit()
+
+        entry_estudiante.delete(0, END)
+        entry_id_estudiante.delete(0, END)
+
+    else:
+        messagebox.showwarning("Aviso", "Seleccione un libro")
+
+# DEVOLVER LIBRO
+def devolver_libro():
+
+    seleccionado = tabla.selection()
+
+    if seleccionado:
+
+        valores = tabla.item(seleccionado, "values")
+
+        # VERIFICAR QUE ESTE PRESTADO
+        if valores[3] == "Disponible":
+            messagebox.showwarning("Aviso", "Este libro ya está disponible")
+            return
+
+        fecha_devolucion = datetime.now().strftime("%d/%m/%Y")
+
+        # ACTUALIZAR TABLA VISUAL
+        tabla.item(
+            seleccionado,
+            values=(
+                valores[0],
+                valores[1],
+                valores[2],
+                "Disponible",
+                "",
+                "",
+                valores[6],
+                fecha_devolucion
+            )
+        )
+
+        # ACTUALIZAR SQLITE
+        cursor.execute(
+            """
+            UPDATE libros
+            SET estado=?, estudiante=?, id_estudiante=?, fecha_devolucion=?
+            WHERE codigo=?
+            """,
+            ("Disponible", "", "", fecha_devolucion, valores[0])
+        )
+        conexion.commit()
+
+        messagebox.showinfo("Correcto", "Libro devuelto")
+
+    else:
+        messagebox.showwarning("Aviso", "Seleccione un libro")
+
+# FUNCION MOSTRAR REPORTE
+def mostrar_reporte():
+
+    total = len(tabla.get_children())
+    disponibles = 0
+    prestados = 0
+
+    for item in tabla.get_children():
+        valores = tabla.item(item, "values")
+        if valores[3] == "Disponible":
+            disponibles += 1
+        else:
+            prestados += 1
+
+    resumen = f"""
+REPORTE DE BIBLIOTECA
+
+ Total de libros: {total}
+ Disponibles: {disponibles}
+ Prestados: {prestados}
+"""
+
+    # VENTANA REPORTE
+    ventana_reporte = Toplevel(ventana)
+    ventana_reporte.title("Reporte de Préstamos")
+
+    Label(ventana_reporte, text=resumen, justify=LEFT).pack(pady=10)
+
+    # LISTAR LIBROS PRESTADOS DESDE SQLITE
+    libros_prestados = cursor.execute(
+        "SELECT * FROM libros WHERE estado='Prestado'"
+    ).fetchall()
+
+    if libros_prestados:
+        Label(
+            ventana_reporte,
+            text="Libros prestados:",
+            font=("Arial", 10, "bold")
+        ).pack()
+        for libro in libros_prestados:
+            Label(
+                ventana_reporte,
+                text=f"{libro[0]} - {libro[1]} - {libro[4]} (ID: {libro[5]})"
+            ).pack()
+    else:
+        Label(ventana_reporte, text="No hay libros prestados actualmente.").pack()
+
+# CERRAR APLICACION
+def cerrar_app():
+    conexion.close()
+    ventana.destroy()
+
+ventana.protocol("WM_DELETE_WINDOW", cerrar_app)
+
+# ── UI ─────────────────────────────────────────────────────────────────────────
+
+# TITULO
+Label(
+    ventana,
+    text="Sistema de Biblioteca",
+    font=("Arial", 20)
+).pack(pady=10)
+
+# FORMULARIO AGREGAR LIBRO
+frame_formulario = Frame(ventana)
+frame_formulario.pack(pady=10)
+
+Label(frame_formulario, text="Código").grid(row=0, column=0, padx=5, pady=2)
+entry_codigo = Entry(frame_formulario)
+entry_codigo.grid(row=0, column=1, padx=5, pady=2)
+
+Label(frame_formulario, text="Título").grid(row=1, column=0, padx=5, pady=2)
+entry_titulo = Entry(frame_formulario)
+entry_titulo.grid(row=1, column=1, padx=5, pady=2)
+
+Label(frame_formulario, text="Autor").grid(row=2, column=0, padx=5, pady=2)
+entry_autor = Entry(frame_formulario)
+entry_autor.grid(row=2, column=1, padx=5, pady=2)
+
+# BOTONES AGREGAR / ELIMINAR
+Button(
+    ventana,
+    text="Agregar Libro",
+    command=agregar_libro,
+    bg="green",
+    fg="white",
+    width=20
+).pack(pady=2)
+
+Button(
+    ventana,
+    text="Eliminar Libro",
+    command=eliminar_libro,
+    bg="red",
+    fg="white",
+    width=20
+).pack(pady=5)
+
+# TABLA
+tabla = ttk.Treeview(
+    ventana,
+    columns=("Codigo", "Titulo", "Autor", "Estado", "Estudiante", "IdEstudiante", "FechaPrestamo", "FechaDevolucion"),
+    show="headings"
+)
+
+tabla.heading("Codigo", text="Código")
+tabla.heading("Titulo", text="Título")
+tabla.heading("Autor", text="Autor")
+tabla.heading("Estado", text="Estado")
+tabla.heading("Estudiante", text="Prestado a")
+tabla.heading("IdEstudiante", text="DNI")
+tabla.heading("FechaPrestamo", text="Fecha Préstamo")
+tabla.heading("FechaDevolucion", text="Fecha Devolución")
+
+tabla.column("Codigo", width=80, anchor="center")
+tabla.column("Titulo", width=180, anchor="center")
+tabla.column("Autor", width=130, anchor="center")
+tabla.column("Estado", width=90, anchor="center")
+tabla.column("Estudiante", width=130, anchor="center")
+tabla.column("IdEstudiante", width=100, anchor="center")
+tabla.column("FechaPrestamo", width=110, anchor="center")
+tabla.column("FechaDevolucion", width=110, anchor="center")
+
+tabla.pack(pady=15)
+
+# FORMULARIO PRESTAMO
+frame_prestamo = Frame(ventana)
+frame_prestamo.pack(pady=10)
+
+Label(frame_prestamo, text="Sujeto").grid(row=0, column=0, padx=5, pady=2)
+entry_estudiante = Entry(frame_prestamo)
+entry_estudiante.grid(row=0, column=1, padx=5, pady=2)
+
+Label(frame_prestamo, text="DNI").grid(row=1, column=0, padx=5, pady=2)
+entry_id_estudiante = Entry(frame_prestamo)
+entry_id_estudiante.grid(row=1, column=1, padx=5, pady=2)
+
+# BOTONES PRESTAMO / DEVOLVER / REPORTE
+Button(
+    ventana,
+    text="Registrar Préstamo",
+    command=prestar_libro,
+    bg="blue",
+    fg="white"
+).pack(pady=5)
+
+Button(
+    ventana,
+    text="Devolver Libro",
+    command=devolver_libro,
+    bg="orange",
+    fg="black"
+).pack(pady=5)
+
+Button(
+    ventana,
+    text="Ver Reporte",
+    command=mostrar_reporte,
+    bg="purple",
+    fg="white"
+).pack(pady=5)
+
+# CARGAR LIBROS GUARDADOS
+cursor.execute("SELECT * FROM libros")
+for libro in cursor.fetchall():
+    tabla.insert("", END, values=libro)
+
+ventana.mainloop()
